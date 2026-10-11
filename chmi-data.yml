@@ -1,0 +1,50 @@
+name: ČHMÚ data
+
+on:
+  schedule:
+    - cron: '25 * * * *'     # každou hodinu v :25 (GitHub může start o několik minut zpozdit)
+  workflow_dispatch:          # ruční spuštění v záložce Actions
+  push:
+    paths: ['stations.txt']   # po změně seznamu stanic se stáhne hned
+
+permissions:
+  contents: write
+
+concurrency:
+  group: chmi-data
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stáhnout meteogramy z data-provider.chmi.cz
+        run: |
+          mkdir -p data
+          ok=0; fail=0
+          while read -r id _; do
+            case "$id" in ''|\#*) continue ;; esac
+            if ! [[ "$id" =~ ^[0-9]+$ ]]; then echo "Přeskakuji neplatné ID: $id"; continue; fi
+            if curl -fsS --retry 3 --retry-delay 5 --max-time 60 \
+                 -A "meteogram-github-action (+https://github.com/${GITHUB_REPOSITORY})" \
+                 "https://data-provider.chmi.cz/api/graphs/graf.meteogram/${id}" -o "data/${id}.tmp" \
+               && python3 -c "import json,sys; j=json.load(open('data/${id}.tmp')); assert j['data'] and 't2m' in j['data'][0]"; then
+              mv "data/${id}.tmp" "data/${id}.json"; echo "OK stanice ${id}"; ok=$((ok+1))
+            else
+              rm -f "data/${id}.tmp"; echo "CHYBA stanice ${id}"; fail=$((fail+1))
+            fi
+          done < stations.txt
+          echo "Hotovo: ${ok} ok, ${fail} chyb"
+          [ "$ok" -gt 0 ]      # pokud nic nevyšlo, workflow selže a uvidíte to v Actions
+
+      - name: Uložit změny
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then echo "Beze změn"; else
+            git commit -m "Aktualizace dat ČHMÚ $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi

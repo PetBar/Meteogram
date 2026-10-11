@@ -50,15 +50,16 @@ small{color:var(--mut)}
     <label>Zdroj dat</label>
     <select id="src">
       <option value="om">Open-Meteo – model ALADIN (ČHMÚ), funguje hned</option>
-      <option value="chmi">ČHMÚ meteogram (data-provider.chmi.cz) – vyžaduje proxy</option>
+      <option value="chmigh">ČHMÚ meteogram – data stahovaná do GitHub repozitáře (Actions)</option>
+      <option value="chmi">ČHMÚ meteogram – přes proxy (Cloudflare Worker)</option>
     </select>
     <div id="omset">
       <label>Model Open-Meteo</label>
       <select id="model"><option value="chmi_aladin_seamless">ČHMÚ ALADIN</option><option value="icon_seamless">DWD ICON</option><option value="ecmwf_ifs025">ECMWF IFS</option><option value="best_match">Nejlepší shoda</option></select>
     </div>
     <div id="chset" style="display:none">
-      <label>Adresa proxy (Cloudflare Worker, viz README), bez lomítka na konci</label>
-      <input id="proxy" placeholder="https://moje-proxy.workers.dev">
+      <div id="pxset"><label>Adresa proxy (Cloudflare Worker, viz README), bez lomítka na konci</label>
+      <input id="proxy" placeholder="https://moje-proxy.workers.dev"></div>
       <label>Číslo stanice ČHMÚ (155 = Chotěboř, z URL chmi.cz/meteogram/<b>155</b>-chotebor)</label>
       <input id="sid" value="155" inputmode="numeric">
     </div>
@@ -98,7 +99,17 @@ function fromOM(j){
     wind:h.wind_speed_10m.map(v=>v==null?null:v*kms),gust:h.wind_gusts_10m.map(v=>v==null?null:v*kms),
     dir:h.wind_direction_10m,pres:h.pressure_msl};
 }
+const ghBase=()=>{const h=location.hostname;
+  if(h.endsWith('.github.io')){const repo=location.pathname.split('/')[1]; return 'https://raw.githubusercontent.com/'+h.split('.')[0]+'/'+repo+'/main/'}
+  return ''};   // jinak (lokálně / vlastní hosting) data/<id>.json vedle aplikace
 async function load(){
+  if(S.src==='chmigh'){
+    const r=await fetch(ghBase()+'data/'+encodeURIComponent(S.sid)+'.json');
+    if(r.status===404) throw new Error('Pro stanici '+S.sid+' zatím nejsou data v repozitáři. Přidejte ji do souboru stations.txt a spusťte workflow „ČHMÚ data“ (záložka Actions).');
+    if(!r.ok) throw new Error('Data z repozitáře: '+r.status);
+    const j=await r.json(); if(!j.data||!j.data.length) throw new Error('Soubor s daty je prázdný');
+    return fromChmi(j);
+  }
   if(S.src==='chmi'){
     if(!S.proxy) throw new Error('Pro zdroj ČHMÚ nastavte adresu proxy (⚙). ČHMÚ nepovoluje přímé čtení z cizích domén (CORS).');
     const r=await fetch(S.proxy.replace(/\/$/,'')+'/api/graphs/graf.meteogram/'+encodeURIComponent(S.sid));
@@ -202,7 +213,7 @@ function render(){
   chart.setOption(opt,true);
   const c=temp[0][1];
   $('now').innerHTML='<b>'+(c==null?'–':Math.round(c))+'°C</b><span>Vítr '+(wind[0][1]??'–')+' '+wu+' '+(dirs[0]==null?'':compass(dirs[0]))+
-    ' · Tlak '+(pres[0][1]==null?'–':Math.round(pres[0][1]))+' hPa · '+(S.src==='chmi'?'stanice '+S.sid+(D.alt?' ('+D.alt+' m n. m.)':''):S.place.name)+'</span>';
+    ' · Tlak '+(pres[0][1]==null?'–':Math.round(pres[0][1]))+' hPa · '+(S.src!=='om'?'stanice '+S.sid+(D.alt?' ('+D.alt+' m n. m.)':''):S.place.name)+'</span>';
   $('foot').textContent='Zdroj: '+D.src+(hasGust?'':' · nárazy větru zdroj neposkytuje') +'.';
 }
 
@@ -220,7 +231,7 @@ function applyTheme(){
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{applyTheme();render()});
 function syncUI(){
   $('src').value=S.src;$('model').value=S.model;$('proxy').value=S.proxy;$('sid').value=S.sid;$('theme').value=S.theme;$('wu').value=S.wu;$('hrs').value=S.hrs;
-  $('omset').style.display=S.src==='om'?'':'none';$('chset').style.display=S.src==='chmi'?'':'none';$('q').placeholder='Hledat místo… ('+S.place.name+')';
+  $('omset').style.display=S.src==='om'?'':'none';$('chset').style.display=S.src!=='om'?'':'none';$('pxset').style.display=S.src==='chmi'?'':'none';$('q').placeholder='Hledat místo… ('+S.place.name+')';
 }
 $('cfg').onclick=()=>{const s=$('set');s.style.display=s.style.display==='block'?'none':'block'};
 [['src','src'],['model','model'],['proxy','proxy'],['sid','sid'],['theme','theme'],['wu','wu'],['hrs','hrs']].forEach(([id,k])=>{

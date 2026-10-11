@@ -1,0 +1,2 @@
+# Čísla stanic ČHMÚ, jedno na řádek (číslo je v adrese chmi.cz/meteogram/155-chotebor)
+155

@@ -1,12 +1,13 @@
 // Service worker: aplikace se spustí i offline (soubory + knihovna ECharts). Data předpovědi se vždy berou z internetu.
-const V = 'meteogram-v1';
+const V = 'meteogram-v2';
 const ECHARTS = 'https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-48.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil((async () => {
     const c = await caches.open(V);
-    await c.addAll(FILES);
+    // každý soubor zvlášť: chybějící soubor nesmí shodit celou instalaci service workeru
+    await Promise.all(FILES.map(f => c.add(f).catch(() => {})));
     try { await c.add(new Request(ECHARTS, { mode: 'cors' })); } catch (_) {}
     self.skipWaiting();
   })());
