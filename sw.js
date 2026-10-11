@@ -1,7 +1,7 @@
 // Service worker: aplikace se spustí i offline (soubory + knihovna ECharts). Data předpovědi se vždy berou z internetu.
-const V = 'meteogram-v2';
+const V = 'meteogram-v3';
 const ECHARTS = 'https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js';
-const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-48.png'];
+const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'favicon-48.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil((async () => {
