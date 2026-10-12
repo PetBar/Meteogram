@@ -25,8 +25,13 @@ button{cursor:pointer}button:hover{border-color:var(--acc)}
 #res{position:absolute;background:var(--card);border:1px solid var(--line);border-radius:8px;margin-top:4px;max-height:260px;overflow:auto;z-index:9;display:none}
 #res div{padding:7px 12px;cursor:pointer}#res div:hover{background:var(--bg)}
 main{max-width:1100px;margin:0 auto;padding:10px 12px 30px}
-#now{display:flex;flex-wrap:wrap;gap:6px 22px;align-items:baseline;margin:6px 2px 10px}
-#now b{font-size:34px}#now span{color:var(--mut)}
+#now{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:6px 2px 12px}
+#now .wi{width:58px;height:58px;flex:none}
+#now b{font-size:38px;line-height:1;white-space:nowrap}
+#now .nm{display:flex;flex-direction:column;min-width:0}
+#now .place{font-size:21px;font-weight:600;line-height:1.2}
+#now .desc{color:var(--mut)}
+#now .det{flex-basis:100%;color:var(--mut)}
 #chart{width:100%;background:var(--card);border:1px solid var(--line);border-radius:12px}
 #msg{color:#b45309;margin:8px 2px;min-height:1.2em}
 #set{display:none;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:10px 0}
@@ -62,6 +67,8 @@ small{color:var(--mut)}
       <input id="proxy" placeholder="https://moje-proxy.workers.dev"></div>
       <label>Číslo stanice ČHMÚ (155 = Chotěboř, z URL chmi.cz/meteogram/<b>155</b>-chotebor)</label>
       <input id="sid" value="155" inputmode="numeric">
+      <label>Název stanice (zobrazí se vedle teploty)</label>
+      <input id="sname" placeholder="např. Chotěboř">
     </div>
     <label>Motiv</label>
     <select id="theme"><option value="auto">Podle systému</option><option value="light">Světlý</option><option value="dark">Tmavý</option></select>
@@ -78,7 +85,7 @@ small{color:var(--mut)}
 'use strict';
 const $=id=>document.getElementById(id);
 const TZ='Europe/Prague';
-const DEF={src:'om',model:'chmi_aladin_seamless',proxy:'',sid:'155',theme:'auto',wu:'ms',hrs:'73',
+const DEF={src:'om',model:'chmi_aladin_seamless',proxy:'',sid:'155',sname:'Chotěboř',theme:'auto',wu:'ms',hrs:'73',
   place:{name:'Chotěboř',lat:49.7207,lon:15.6716}};
 let S=Object.assign({},DEF);
 try{Object.assign(S,JSON.parse(localStorage.getItem('mg')||'{}'))}catch(e){}
@@ -89,7 +96,7 @@ function fromChmi(j){
   const d=j.data;
   return {src:'ČHMÚ (meteogram, ALADIN)',alt:j.z,t:d.map(x=>Date.parse(x.validityTime)),temp:d.map(x=>x.t2m),prec:d.map(x=>x.prec),
     snow:d.map(x=>x.snow),wind:d.map(x=>x.windSpeed),gust:d.map(x=>x.windGustSpeed),dir:d.map(x=>x.windDirection),
-    pres:d.map(x=>x.mslp)};
+    pres:d.map(x=>x.mslp),cloud:d.map(x=>x.cloudsTot)};
 }
 function fromOM(j){
   const h=j.hourly, n=h.time.length, kms=1/3.6;
@@ -97,7 +104,7 @@ function fromOM(j){
   return {src:'Open-Meteo ('+S.model+')',alt:j.elevation,
     t:h.time.map(s=>Date.parse(s+'Z')),temp:h.temperature_2m,prec:h.precipitation,snow:snowW,
     wind:h.wind_speed_10m.map(v=>v==null?null:v*kms),gust:h.wind_gusts_10m.map(v=>v==null?null:v*kms),
-    dir:h.wind_direction_10m,pres:h.pressure_msl};
+    dir:h.wind_direction_10m,pres:h.pressure_msl,cloud:h.cloud_cover||[]};
 }
 const ghBase=()=>{const h=location.hostname;
   if(h.endsWith('.github.io')){const repo=location.pathname.split('/')[1]; return 'https://raw.githubusercontent.com/'+h.split('.')[0]+'/'+repo+'/main/'}
@@ -117,7 +124,7 @@ async function load(){
     return fromChmi(await r.json());
   }
   const u='https://api.open-meteo.com/v1/forecast?latitude='+S.place.lat+'&longitude='+S.place.lon+
-   '&hourly=temperature_2m,precipitation,snowfall,wind_speed_10m,wind_gusts_10m,wind_direction_10m,pressure_msl'+
+   '&hourly=temperature_2m,precipitation,snowfall,wind_speed_10m,wind_gusts_10m,wind_direction_10m,pressure_msl,cloud_cover'+
    '&wind_speed_unit=kmh&models='+S.model+'&timezone=UTC&forecast_days=4';
   const r=await fetch(u); if(!r.ok) throw new Error('Open-Meteo vrátilo '+r.status);
   const j=await r.json(); if(!j.hourly) throw new Error('Open-Meteo: žádná data pro toto místo/model');
@@ -133,6 +140,39 @@ const fmtD=new Intl.DateTimeFormat('cs-CZ',{timeZone:TZ,weekday:'short',day:'num
 const pragueParts=ms=>{const p={};new Intl.DateTimeFormat('en-GB',{timeZone:TZ,year:'numeric',month:'numeric',day:'numeric',hour:'numeric',hourCycle:'h23'}).formatToParts(ms).forEach(x=>p[x.type]=+x.value);return p};
 const compass=d=>['S','SSV','SV','VSV','V','VJV','JV','JJV','J','JJZ','JZ','ZJZ','Z','ZSZ','SZ','SSZ'][Math.round((((d%360)+360)%360)/22.5)%16];
 
+
+// ---------- ikona a popis počasí (odvozeno z oblačnosti, srážek a sněhu; den/noc podle výpočtu východu a západu slunce) ----------
+function isDay(ms){
+  const lat=S.place.lat*Math.PI/180, lon=S.place.lon, d=new Date(ms);
+  const N=Math.floor((Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate())-Date.UTC(d.getUTCFullYear(),0,0))/864e5);
+  const decl=23.44*Math.PI/180*Math.sin(2*Math.PI*(284+N)/365), B=2*Math.PI*(N-81)/364;
+  const eot=9.87*Math.sin(2*B)-7.53*Math.cos(B)-1.5*Math.sin(B);       // minuty
+  const c=-Math.tan(lat)*Math.tan(decl); const half=c>=1?0:c<=-1?12:Math.acos(c)*12/Math.PI; // hodiny
+  const noon=Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate())+(12-lon/15-eot/60)*3600e3;
+  return Math.abs(ms-noon)<=half*3600e3;
+}
+const sunG=(x,y,r)=>{let k='';for(let i=0;i<8;i++){const a=i*Math.PI/4,c=Math.cos(a),s=Math.sin(a);
+  k+='<line x1="'+(x+c*(r+3.5)).toFixed(1)+'" y1="'+(y+s*(r+3.5)).toFixed(1)+'" x2="'+(x+c*(r+7.5)).toFixed(1)+'" y2="'+(y+s*(r+7.5)).toFixed(1)+'"/>'}
+  return '<g stroke="#ffb703" stroke-width="3" stroke-linecap="round">'+k+'</g><circle cx="'+x+'" cy="'+y+'" r="'+r+'" fill="#ffc933"/>'};
+const moonG=(x,y,r)=>'<defs><mask id="mmk"><rect width="64" height="64" fill="#fff"/><circle cx="'+(x+r*.6)+'" cy="'+(y-r*.4)+'" r="'+r*.85+'" fill="#000"/></mask></defs><circle cx="'+x+'" cy="'+y+'" r="'+r+'" fill="#f3e3a0" mask="url(#mmk)"/>';
+const cloudG=(x,y,k,fill)=>'<g transform="translate('+x+' '+y+') scale('+k+')" fill="'+fill+'"><circle cx="18" cy="38" r="9"/><circle cx="29" cy="31" r="12"/><circle cx="42" cy="37" r="10"/><rect x="9" y="37" width="43" height="12" rx="6"/></g>';
+function weather(i){
+  const cl=D.cloud&&D.cloud[i]!=null?D.cloud[i]:null, pr=D.prec[i]||0, sn=D.snow&&D.snow[i]||0, day=isDay(D.t[i]);
+  const lum=day?sunG:moonG;
+  let g,txt;
+  if(pr>=0.1){
+    const share=sn/pr, snowy=share>.5, mixed=share>.15&&!snowy, heavy=pr>=2.5;
+    const drops=snowy?'<g fill="#8fd0f7"><circle cx="20" cy="53" r="2.6"/><circle cx="32" cy="57" r="2.6"/><circle cx="44" cy="53" r="2.6"/><circle cx="26" cy="59" r="2"/><circle cx="38" cy="59" r="2"/></g>'
+      :'<g stroke="#3b82f6" stroke-width="3" stroke-linecap="round"><path d="M21 51l-3 7M33 51l-3 7M45 51l-3 7'+(heavy?'M27 53l-3 7M39 53l-3 7':'')+'"/></g>';
+    g=(cl!=null&&cl<85?lum(44,19,8):'')+cloudG(2,-4,1,'#94a3b8')+drops;
+    txt=snowy?'Sněžení':mixed?'Déšť se sněhem':heavy?'Silný déšť':'Déšť';
+  }else if(cl==null||cl<20){ g=lum(32,32,13); txt=day?'Jasno':'Jasná noc'; }
+  else if(cl<50){ g=lum(42,22,9)+cloudG(-2,4,.95,'#dbe4ee'); txt='Skoro jasno'; }
+  else if(cl<85){ g=lum(44,20,8)+cloudG(0,2,1,'#cfd9e5'); txt='Polojasno až oblačno'; }
+  else { g=cloudG(2,2,1.05,'#b7c4d4'); txt='Zataženo'; }
+  return {svg:'<svg viewBox="0 0 64 64" width="100%" height="100%" role="img" aria-label="'+txt+'">'+g+'</svg>',txt};
+}
+
 const el0w=()=>$('chart').clientWidth;
 function render(){
   if(!D) return;
@@ -142,6 +182,7 @@ function render(){
   const t=sl(D.t), kmh=S.wu==='kmh', wf=kmh?3.6:1, wu=kmh?'km/h':'m/s';
   const zip=a=>sl(a).map((v,i)=>[t[i],v==null?null:v]);
   const temp=zip(D.temp), prec=zip(D.prec), snow=zip(D.snow), pres=zip(D.pres);
+  const cloudA=zip(D.cloud&&D.cloud.length?D.cloud:D.t.map(()=>null)), hasCloud=cloudA.some(p=>p[1]!=null);
   const wind=sl(D.wind).map((v,i)=>[t[i],v==null?null:+(v*wf).toFixed(1)]);
   const gustA=sl(D.gust).map((v,i)=>[t[i],v==null?null:+(v*wf).toFixed(1)]);
   const hasGust=gustA.some(p=>p[1]>0&&p[1]!=null);
@@ -149,7 +190,7 @@ function render(){
   const astep=Math.max(1,Math.ceil(hrs/Math.max(6,Math.floor((el0w()-66)/24))));
   const fg=css('--fg'),mut=css('--mut'),grid=css('--grid');
 
-  const el=$('chart'); const H=el.clientWidth<600?[170,140,170,150]:[210,150,210,170];
+  const el=$('chart'); const H=(el.clientWidth<600?[170,140,170,150]:[210,150,210,170]).concat(hasCloud?[el.clientWidth<600?110:120]:[]);
   const gap=50, top=30; let y=top; const grids=[],tops=[];
   H.forEach(h=>{tops.push(y);grids.push({left:50,right:16,top:y,height:h,containLabel:false,outerBoundsMode:'none'});y+=h+gap});
   el.style.height=(y-gap+top+34)+'px';
@@ -165,7 +206,7 @@ function render(){
   const xAx=grids.map((_,gi)=>({type:'time',gridIndex:gi,min:t[0],max:t[t.length-1],axisLine:{lineStyle:{color:mut}},
     axisTick:{show:true},splitNumber:Math.round(hrs/6),
     axisLabel:{color:mut,hideOverlap:true,formatter:v=>{const h=fmtH.format(v);return h==='00'?fmtD.format(v):h}},
-    splitLine:{show:true,lineStyle:{color:grid}},axisPointer:{show:true,lineStyle:{color:mut,type:'dashed'},label:{show:gi===3,formatter:p=>fmtT.format(p.value)}}}));
+    splitLine:{show:true,lineStyle:{color:grid}},axisPointer:{show:true,lineStyle:{color:mut,type:'dashed'},label:{show:gi===grids.length-1,formatter:p=>fmtT.format(p.value)}}}));
   const yAx=(gi,name,extra)=>Object.assign({type:'value',gridIndex:gi,name,nameLocation:'end',nameTextStyle:{color:mut,align:'left',padding:[0,0,6,-44]},nameGap:8,
     axisLabel:{color:mut},splitLine:{lineStyle:{color:grid}},axisLine:{show:false}},extra||{});
   const tv=temp.map(p=>p[1]).filter(v=>v!=null), tmin=Math.min(...tv), tmax=Math.max(...tv);
@@ -189,7 +230,8 @@ function render(){
       yAx(0,'Teplota °C',{scale:true,min:v=>Math.floor(v.min-1),max:v=>Math.ceil(v.max+1)}),
       yAx(1,'Srážky mm/h',{min:0,max:Math.max(1,Math.ceil(pm*1.2))}),
       yAx(2,'Vítr '+wu,{min:0,max:Math.ceil(arrowY*1.1)}),
-      yAx(3,'Tlak hPa',{axisLabel:{color:mut,formatter:v=>String(v)},scale:true,min:v=>Math.floor(v.min-1),max:v=>Math.ceil(v.max+1)})],
+      yAx(3,'Tlak hPa',{axisLabel:{color:mut,formatter:v=>String(v)},scale:true,min:v=>Math.floor(v.min-1),max:v=>Math.ceil(v.max+1)}),
+      ...(hasCloud?[yAx(4,'Oblačnost %',{min:0,max:100,interval:50})]:[])],
     axisPointer:{link:[{xAxisIndex:'all'}]},
     tooltip:{trigger:'axis',confine:true,backgroundColor:css('--card'),borderColor:css('--line'),textStyle:{color:fg},
       axisPointer:{type:'line'},
@@ -197,7 +239,7 @@ function render(){
         const f=(v,u,d=1)=>v==null?'–':(+v).toFixed(d)+' '+u;
         return '<b>'+fmtT.format(ms)+'</b><br>Teplota: <b>'+f(temp[i][1],'°C')+'</b><br>Srážky: '+f(prec[i][1],'mm/h')+
           (snow[i][1]>0?' (sníh '+f(snow[i][1],'mm/h')+')':'')+'<br>Vítr: '+f(wind[i][1],wu)+' '+(dirs[i]==null?'':compass(dirs[i]))+
-          (hasGust?'<br>Nárazy: '+f(gustA[i][1],wu):'')+'<br>Tlak: '+f(pres[i][1],'hPa',0);}},
+          (hasGust?'<br>Nárazy: '+f(gustA[i][1],wu):'')+'<br>Tlak: '+f(pres[i][1],'hPa',0)+(hasCloud?'<br>Oblačnost: '+f(cloudA[i][1],'%',0):'');}},
     series:[
       tempSeries,
       rects(prec,'#2f80ed',3,true),
@@ -208,12 +250,18 @@ function render(){
       {type:'scatter',xAxisIndex:2,yAxisIndex:2,silent:true,z:5,symbol:'path://M0,-10 L6,4 L0,1 L-6,4 Z',symbolSize:12,
         itemStyle:{color:'#1d6f42'},
         data:t.map((ms,i)=>({value:[ms,arrowY*0.97],symbolRotate:-(((dirs[i]||0)+180)%360)})).filter((_,i)=>dirs[i]!=null&&i%astep===0)},
-      {type:'line',xAxisIndex:3,yAxisIndex:3,data:pres,showSymbol:false,smooth:.2,lineStyle:{width:2.5,color:'#7b4fd0'},z:3,markLine:ml()}
+      {type:'line',xAxisIndex:3,yAxisIndex:3,data:pres,showSymbol:false,smooth:.2,lineStyle:{width:2.5,color:'#7b4fd0'},z:3,markLine:ml()},
+      ...(hasCloud?[{type:'line',xAxisIndex:4,yAxisIndex:4,data:cloudA,showSymbol:false,step:'middle',lineStyle:{width:1.5,color:'#7b8da3'},areaStyle:{color:'#7b8da3',opacity:.35},z:3,markLine:ml()}]:[])
     ]};
   chart.setOption(opt,true);
-  const c=temp[0][1];
-  $('now').innerHTML='<b>'+(c==null?'–':Math.round(c))+'°C</b><span>Vítr '+(wind[0][1]??'–')+' '+wu+' '+(dirs[0]==null?'':compass(dirs[0]))+
-    ' · Tlak '+(pres[0][1]==null?'–':Math.round(pres[0][1]))+' hPa · '+(S.src!=='om'?'stanice '+S.sid+(D.alt?' ('+D.alt+' m n. m.)':''):S.place.name)+'</span>';
+  let ni=0,bd=Infinity; t.forEach((x,k)=>{const dd=Math.abs(x-now); if(dd<bd){bd=dd;ni=k}});
+  const gi=i0+ni, c=temp[ni][1], wx=weather(gi);
+  const place=S.src==='om'?S.place.name:(S.sname||('Stanice '+S.sid));
+  const esc=x=>String(x).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+  $('now').innerHTML='<div class="wi">'+wx.svg+'</div><b>'+(c==null?'–':Math.round(c))+'°C</b><div class="nm"><span class="place">'+esc(place)+'</span><span class="desc">'+wx.txt+'</span></div>'+
+    '<div class="det">Vítr '+(wind[ni][1]??'–')+' '+wu+' '+(dirs[ni]==null?'':compass(dirs[ni]))+
+    ' · Tlak '+(pres[ni][1]==null?'–':Math.round(pres[ni][1]))+' hPa'+(hasCloud&&cloudA[ni][1]!=null?' · Oblačnost '+Math.round(cloudA[ni][1])+' %':'')+
+    (S.src!=='om'&&D.alt?' · '+D.alt+' m n. m.':'')+'</div>';
   $('foot').textContent='Zdroj: '+D.src+(hasGust?'':' · nárazy větru zdroj neposkytuje') +'.';
 }
 
@@ -230,12 +278,12 @@ function applyTheme(){
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{applyTheme();render()});
 function syncUI(){
-  $('src').value=S.src;$('model').value=S.model;$('proxy').value=S.proxy;$('sid').value=S.sid;$('theme').value=S.theme;$('wu').value=S.wu;$('hrs').value=S.hrs;
+  $('src').value=S.src;$('model').value=S.model;$('proxy').value=S.proxy;$('sid').value=S.sid;$('sname').value=S.sname||'';$('theme').value=S.theme;$('wu').value=S.wu;$('hrs').value=S.hrs;
   $('omset').style.display=S.src==='om'?'':'none';$('chset').style.display=S.src!=='om'?'':'none';$('pxset').style.display=S.src==='chmi'?'':'none';$('q').placeholder='Hledat místo… ('+S.place.name+')';
 }
 $('cfg').onclick=()=>{const s=$('set');s.style.display=s.style.display==='block'?'none':'block'};
-[['src','src'],['model','model'],['proxy','proxy'],['sid','sid'],['theme','theme'],['wu','wu'],['hrs','hrs']].forEach(([id,k])=>{
-  $(id).addEventListener('change',()=>{S[k]=$(id).value.trim();save();syncUI();applyTheme();(k==='wu'||k==='hrs'||k==='theme')?render():refresh()})});
+[['src','src'],['model','model'],['proxy','proxy'],['sid','sid'],['sname','sname'],['theme','theme'],['wu','wu'],['hrs','hrs']].forEach(([id,k])=>{
+  $(id).addEventListener('change',()=>{S[k]=$(id).value.trim();if(k==='sid')S.sname='';save();syncUI();applyTheme();(k==='wu'||k==='hrs'||k==='theme'||k==='sname')?render():refresh()})});
 let tm;$('q').addEventListener('input',()=>{clearTimeout(tm);const v=$('q').value.trim();if(v.length<2){$('res').style.display='none';return}
   tm=setTimeout(async()=>{try{
     const r=await fetch('https://geocoding-api.open-meteo.com/v1/search?count=8&language=cs&country_code=CZ&name='+encodeURIComponent(v));
